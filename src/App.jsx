@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { supabase } from './supabase.js'
 
-const KEY = 'recipe-box:v1'
 const blank = {
   title: '', sourceName: '', sourceUrl: '', rating: 0, tags: '',
   ingredients: '', steps: '', notes: '', lastMade: '',
 }
 
-const load = () => {
-  try { return JSON.parse(localStorage.getItem(KEY)) || [] } catch { return [] }
-}
 const hostOf = (url) => {
   try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' }
 }
@@ -21,19 +18,76 @@ const Stars = ({ n }) => (
 )
 
 export default function App() {
-  const [recipes, setRecipes] = useState(load)
+  const [session, setSession] = useState(undefined)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
+    return () => data.subscription.unsubscribe()
+  }, [])
+
+  if (session === undefined) return <main className="container py-5">Loading…</main>
+  if (!session) return <Login />
+  return <Box />
+}
+
+function Login() {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) setError('Wrong email or password. Check them and try again.')
+    setBusy(false)
+  }
+
+  return (
+    <main className="container py-5" style={{ maxWidth: 420 }}>
+      <h1 className="site-title mb-1">Recipe Box</h1>
+      <p className="site-sub mb-4">Sign in to see the recipes.</p>
+      <form onSubmit={submit} className="d-grid gap-3">
+        <div>
+          <label className="form-label" htmlFor="email">Email</label>
+          <input id="email" className="form-control" type="email" required autoComplete="username"
+            value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+        <div>
+          <label className="form-label" htmlFor="pw">Password</label>
+          <input id="pw" className="form-control" type="password" required autoComplete="current-password"
+            value={password} onChange={(e) => setPassword(e.target.value)} />
+        </div>
+        {error && <div className="alert alert-danger mb-0" role="alert">{error}</div>}
+        <button className="btn btn-primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+      </form>
+    </main>
+  )
+}
+
+function Box() {
+  const [recipes, setRecipes] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [tag, setTag] = useState('')
-  const [view, setView] = useState(null)   // recipe being read
-  const [edit, setEdit] = useState(null)   // recipe being edited (or blank)
+  const [view, setView] = useState(null)
+  const [edit, setEdit] = useState(null)
   const fileRef = useRef()
 
-  useEffect(() => { localStorage.setItem(KEY, JSON.stringify(recipes)) }, [recipes])
+  const refresh = async () => {
+    const { data, error } = await supabase
+      .from('recipes').select('id, data').order('created_at', { ascending: false })
+    if (error) setError(error.message)
+    else { setError(''); setRecipes(data.map((r) => ({ ...blank, ...r.data, id: r.id }))) }
+    setLoading(false)
+  }
+  useEffect(() => { refresh() }, [])
 
-  const allTags = useMemo(
-    () => [...new Set(recipes.flatMap(tagList))].sort(),
-    [recipes]
-  )
+  const allTags = useMemo(() => [...new Set(recipes.flatMap(tagList))].sort(), [recipes])
 
   const shown = useMemo(() => {
     const q = query.toLowerCase()
@@ -43,16 +97,21 @@ export default function App() {
     )
   }, [recipes, query, tag])
 
-  const save = (r) => {
-    setRecipes((prev) =>
-      r.id ? prev.map((p) => (p.id === r.id ? r : p)) : [{ ...r, id: crypto.randomUUID() }, ...prev]
-    )
+  const save = async (r) => {
+    const { id, ...fields } = r
+    const res = id
+      ? await supabase.from('recipes').update({ data: fields }).eq('id', id)
+      : await supabase.from('recipes').insert({ data: fields })
+    if (res.error) return alert(`Could not save: ${res.error.message}`)
+    await refresh()
     setEdit(null)
     setView(null)
   }
-  const remove = (id) => {
-    if (!confirm('Delete this recipe?')) return
-    setRecipes((prev) => prev.filter((p) => p.id !== id))
+  const remove = async (id) => {
+    if (!confirm('Delete this recipe for everyone?')) return
+    const { error } = await supabase.from('recipes').delete().eq('id', id)
+    if (error) return alert(`Could not delete: ${error.message}`)
+    await refresh()
     setView(null)
   }
 
@@ -68,10 +127,10 @@ export default function App() {
     try {
       const data = JSON.parse(await file.text())
       if (!Array.isArray(data)) throw new Error()
-      setRecipes((prev) => {
-        const ids = new Set(prev.map((p) => p.id))
-        return [...prev, ...data.filter((d) => d.title && !ids.has(d.id))]
-      })
+      const rows = data.filter((d) => d.title).map(({ id, ...fields }) => ({ data: { ...blank, ...fields } }))
+      const { error } = await supabase.from('recipes').insert(rows)
+      if (error) throw error
+      await refresh()
     } catch { alert('That file is not a Recipe Box export.') }
     e.target.value = ''
   }
@@ -86,8 +145,13 @@ export default function App() {
           <h1 className="site-title mb-0">Recipe Box</h1>
           <p className="site-sub mb-0">{recipes.length} recipes tried and kept</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setEdit(blank)}>Add recipe</button>
+        <div className="d-flex gap-2">
+          <button className="btn btn-primary" onClick={() => setEdit(blank)}>Add recipe</button>
+          <button className="btn btn-outline-secondary" onClick={() => supabase.auth.signOut()}>Sign out</button>
+        </div>
       </header>
+
+      {error && <div className="alert alert-danger" role="alert">Could not load recipes: {error}</div>}
 
       <div className="row g-2 mb-4">
         <div className="col-md-6">
@@ -107,7 +171,9 @@ export default function App() {
         </div>
       </div>
 
-      {recipes.length === 0 ? (
+      {loading ? (
+        <p>Loading recipes…</p>
+      ) : recipes.length === 0 ? (
         <div className="empty">
           <h2 className="h4">No recipes yet</h2>
           <p className="mb-3">Add the first one you've cooked. Paste the link so you can find the original later.</p>
