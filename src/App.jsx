@@ -77,6 +77,9 @@ function Box() {
   const [view, setView] = useState(null)
   const [edit, setEdit] = useState(null)
   const fileRef = useRef()
+  const [importUrl, setImportUrl] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importErr, setImportErr] = useState('')
 
   const refresh = async () => {
     const { data, error } = await supabase
@@ -113,6 +116,22 @@ function Box() {
     if (error) return alert(`Could not delete: ${error.message}`)
     await refresh()
     setView(null)
+  }
+
+  const importFromLink = async (e) => {
+    e.preventDefault()
+    setImporting(true)
+    setImportErr('')
+    const { data, error } = await supabase.functions.invoke('import-recipe', { body: { url: importUrl.trim() } })
+    if (error) {
+      let msg = 'Could not import that link.'
+      try { msg = (await error.context.json()).error || msg } catch { /* keep default */ }
+      setImportErr(msg)
+    } else {
+      setImportUrl('')
+      setEdit({ ...blank, ...data })
+    }
+    setImporting(false)
   }
 
   const exportJson = () => {
@@ -152,6 +171,16 @@ function Box() {
       </header>
 
       {error && <div className="alert alert-danger" role="alert">Could not load recipes: {error}</div>}
+
+      <form className="mb-4" onSubmit={importFromLink}>
+        <label className="form-label" htmlFor="import-url">Paste a recipe link to fill in the form</label>
+        <div className="input-group">
+          <input id="import-url" className="form-control" type="url" required placeholder="https://"
+            value={importUrl} onChange={(e) => setImportUrl(e.target.value)} />
+          <button className="btn btn-primary" disabled={importing}>{importing ? 'Reading page…' : 'Get recipe'}</button>
+        </div>
+        {importErr && <div className="text-danger mt-2" role="alert">{importErr}</div>}
+      </form>
 
       <div className="row g-2 mb-4">
         <div className="col-md-6">
