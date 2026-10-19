@@ -1,0 +1,48 @@
+$paper: #f5f6f2;
+$ink: #1d2a26;
+$plum: #7a2e5e;
+$moss: #5c6f4f;
+$line: #d9ddd3;
+
+$primary: $plum;
+$body-bg: $paper;
+$body-color: $ink;
+$font-family-sans-serif: 'Work Sans', system-ui, sans-serif;
+$headings-font-family: 'Newsreader', Georgia, serif;
+$headings-font-weight: 600;
+$border-radius: 0.5rem;
+
+@import 'bootstrap/scss/bootstrap';
+
+.site-title { font-size: 2.6rem; letter-spacing: -0.01em; }
+.site-sub { color: $moss; }
+
+.recipe-card {
+  background: #fff;
+  border: 1px solid $line;
+  border-radius: 0.5rem;
+  height: 100%;
+  cursor: pointer;
+  &:hover { border-color: $plum; }
+  &:focus-visible { outline: 3px solid $plum; outline-offset: 2px; }
+  .card-title { font-size: 1.35rem; margin-bottom: 0.25rem; }
+}
+
+.stars { color: $plum; letter-spacing: 2px; white-space: nowrap; }
+.tag { background: lighten($moss, 45%); color: darken($moss, 15%); border-radius: 999px; padding: 0.1rem 0.65rem; font-size: 0.8rem; }
+
+.source-link { color: $moss; text-decoration: underline; text-underline-offset: 3px; }
+
+.recipe-body {
+  font-family: 'Newsreader', Georgia, serif;
+  font-size: 1.15rem;
+  line-height: 1.65;
+  max-width: 68ch;
+  li { margin-bottom: 0.4rem; }
+}
+
+.empty { border: 2px dashed $line; border-radius: 0.5rem; padding: 3rem 1.5rem; text-align: center; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .recipe-card { transition: border-color 0.15s; }
+}
