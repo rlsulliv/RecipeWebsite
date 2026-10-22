@@ -4,6 +4,7 @@ import { supabase } from './supabase.js'
 const blank = {
   title: '', sourceName: '', sourceUrl: '', rating: 0, tags: '',
   ingredients: '', steps: '', notes: '', lastMade: '',
+  status: 'tried', favourite: false,
 }
 
 const hostOf = (url) => {
@@ -80,6 +81,8 @@ function Box() {
   const [importUrl, setImportUrl] = useState('')
   const [importing, setImporting] = useState(false)
   const [importErr, setImportErr] = useState('')
+  const [tab, setTab] = useState('tried')
+  const [favOnly, setFavOnly] = useState(false)
 
   const refresh = async () => {
     const { data, error } = await supabase
@@ -91,14 +94,19 @@ function Box() {
   useEffect(() => { refresh() }, [])
 
   const allTags = useMemo(() => [...new Set(recipes.flatMap(tagList))].sort(), [recipes])
+  const counts = {
+    tried: recipes.filter((r) => r.status === 'tried').length,
+    want: recipes.filter((r) => r.status === 'want').length,
+  }
 
   const shown = useMemo(() => {
     const q = query.toLowerCase()
     return recipes.filter((r) =>
+      r.status === tab && (!favOnly || r.favourite) &&
       (!tag || tagList(r).includes(tag)) &&
       (!q || [r.title, r.tags, r.ingredients, r.sourceName].join(' ').toLowerCase().includes(q))
     )
-  }, [recipes, query, tag])
+  }, [recipes, query, tag, tab, favOnly])
 
   const save = async (r) => {
     const { id, ...fields } = r
@@ -118,6 +126,14 @@ function Box() {
     setView(null)
   }
 
+  const patch = async (r, changes) => {
+    const { id, ...fields } = { ...r, ...changes }
+    const { error } = await supabase.from('recipes').update({ data: fields }).eq('id', id)
+    if (error) return alert(`Could not update: ${error.message}`)
+    await refresh()
+    setView({ ...r, ...changes })
+  }
+
   const importFromLink = async (e) => {
     e.preventDefault()
     setImporting(true)
@@ -129,7 +145,7 @@ function Box() {
       setImportErr(msg)
     } else {
       setImportUrl('')
-      setEdit({ ...blank, ...data })
+      setEdit({ ...blank, status: tab, ...data })
     }
     setImporting(false)
   }
@@ -155,22 +171,34 @@ function Box() {
   }
 
   if (edit) return <Editor initial={edit} onSave={save} onCancel={() => setEdit(null)} />
-  if (view) return <Reader r={view} onBack={() => setView(null)} onEdit={() => setEdit(view)} onDelete={() => remove(view.id)} />
+  if (view) return <Reader r={view} onBack={() => setView(null)} onEdit={() => setEdit(view)} onDelete={() => remove(view.id)}
+    onFavourite={() => patch(view, { favourite: !view.favourite })}
+    onTried={() => setEdit({ ...view, status: 'tried', lastMade: new Date().toISOString().slice(0, 10) })} />
 
   return (
     <main className="container py-5">
       <header className="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
         <div>
           <h1 className="site-title mb-0">Recipe Box</h1>
-          <p className="site-sub mb-0">{recipes.length} recipes tried and kept</p>
+          <p className="site-sub mb-0">{counts.tried} tried, {counts.want} on the wishlist</p>
         </div>
         <div className="d-flex gap-2">
-          <button className="btn btn-primary" onClick={() => setEdit(blank)}>Add recipe</button>
+          <button className="btn btn-primary" onClick={() => setEdit({ ...blank, status: tab })}>Add recipe</button>
           <button className="btn btn-outline-secondary" onClick={() => supabase.auth.signOut()}>Sign out</button>
         </div>
       </header>
 
       {error && <div className="alert alert-danger" role="alert">Could not load recipes: {error}</div>}
+
+      <ul className="nav nav-pills mb-4">
+        {[['tried', 'Tried', counts.tried], ['want', 'Want to try', counts.want]].map(([k, label, n]) => (
+          <li className="nav-item" key={k}>
+            <button className={`nav-link ${tab === k ? 'active' : ''}`} aria-current={tab === k} onClick={() => setTab(k)}>
+              {label} ({n})
+            </button>
+          </li>
+        ))}
+      </ul>
 
       <form className="mb-4" onSubmit={importFromLink}>
         <label className="form-label" htmlFor="import-url">Paste a recipe link to fill in the form</label>
@@ -187,11 +215,13 @@ function Box() {
           <input className="form-control" type="search" placeholder="Search titles, ingredients, tags, sites"
             aria-label="Search recipes" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <div className="col-md-3">
+        <div className="col-md-3 d-flex gap-2">
           <select className="form-select" aria-label="Filter by tag" value={tag} onChange={(e) => setTag(e.target.value)}>
             <option value="">All tags</option>
             {allTags.map((t) => <option key={t}>{t}</option>)}
           </select>
+          <button className={`btn ${favOnly ? 'btn-primary' : 'btn-outline-secondary'}`} aria-pressed={favOnly}
+            aria-label="Favourites only" title="Favourites only" onClick={() => setFavOnly(!favOnly)}>♥</button>
         </div>
         <div className="col-md-3 d-flex gap-2">
           <button className="btn btn-outline-secondary flex-fill" onClick={exportJson}>Export</button>
@@ -206,10 +236,10 @@ function Box() {
         <div className="empty">
           <h2 className="h4">No recipes yet</h2>
           <p className="mb-3">Add the first one you've cooked. Paste the link so you can find the original later.</p>
-          <button className="btn btn-primary" onClick={() => setEdit(blank)}>Add recipe</button>
+          <button className="btn btn-primary" onClick={() => setEdit({ ...blank, status: tab })}>Add recipe</button>
         </div>
       ) : shown.length === 0 ? (
-        <p>No recipes match that search.</p>
+        <p>{query || tag || favOnly ? 'No recipes match those filters.' : 'Nothing here yet. Use Add recipe or paste a link above.'}</p>
       ) : (
         <div className="row g-3">
           {shown.map((r) => (
@@ -217,7 +247,7 @@ function Box() {
               <article className="recipe-card p-3" tabIndex={0} role="button"
                 onClick={() => setView(r)} onKeyDown={(e) => e.key === 'Enter' && setView(r)}>
                 <h2 className="card-title">{r.title}</h2>
-                <div className="mb-2"><Stars n={r.rating} /></div>
+                <div className="mb-2">{r.status === 'tried' ? <Stars n={r.rating} /> : <span className="small text-secondary">Want to try</span>}{r.favourite && <span className="stars ms-2" role="img" aria-label="Favourite">♥</span>}</div>
                 <div className="small text-secondary mb-2">{r.sourceName || hostOf(r.sourceUrl) || 'My own'}</div>
                 <div className="d-flex flex-wrap gap-1">{tagList(r).map((t) => <span className="tag" key={t}>{t}</span>)}</div>
               </article>
@@ -229,13 +259,13 @@ function Box() {
   )
 }
 
-function Reader({ r, onBack, onEdit, onDelete }) {
+function Reader({ r, onBack, onEdit, onDelete, onFavourite, onTried }) {
   return (
     <main className="container py-5">
       <button className="btn btn-link px-0 mb-3" onClick={onBack}>Back to all recipes</button>
       <h1>{r.title}</h1>
       <div className="d-flex flex-wrap align-items-center gap-3 mb-3">
-        <Stars n={r.rating} />
+        {r.status === 'tried' ? <Stars n={r.rating} /> : <span className="text-secondary">Want to try</span>}
         {r.sourceUrl && (
           <a className="source-link" href={r.sourceUrl} target="_blank" rel="noreferrer">
             {r.sourceName || hostOf(r.sourceUrl)}
@@ -254,7 +284,11 @@ function Reader({ r, onBack, onEdit, onDelete }) {
       </div>
 
       <div className="d-flex gap-2 mt-4">
-        <button className="btn btn-primary" onClick={onEdit}>Edit</button>
+        {r.status === 'want' && <button className="btn btn-primary" onClick={onTried}>I tried it</button>}
+        <button className="btn btn-outline-secondary" onClick={onFavourite} aria-pressed={r.favourite}>
+          {r.favourite ? '♥ Favourite' : '♡ Add to favourites'}
+        </button>
+        <button className="btn btn-outline-secondary" onClick={onEdit}>Edit</button>
         <button className="btn btn-outline-danger" onClick={onDelete}>Delete</button>
       </div>
     </main>
@@ -283,6 +317,14 @@ function Editor({ initial, onSave, onCancel }) {
           <input id="site" className="form-control" placeholder={hostOf(f.sourceUrl)} value={f.sourceName} onChange={set('sourceName')} />
         </div>
         <div className="col-md-4">
+          <label className="form-label" htmlFor="status">Status</label>
+          <select id="status" className="form-select" value={f.status} onChange={set('status')}>
+            <option value="tried">Tried it</option>
+            <option value="want">Want to try</option>
+          </select>
+        </div>
+        {f.status === 'tried' && (<>
+        <div className="col-md-4">
           <label className="form-label" htmlFor="rating">Rating</label>
           <select id="rating" className="form-select" value={f.rating} onChange={(e) => setF({ ...f, rating: +e.target.value })}>
             <option value={0}>Not rated</option>
@@ -293,7 +335,8 @@ function Editor({ initial, onSave, onCancel }) {
           <label className="form-label" htmlFor="made">Last made</label>
           <input id="made" className="form-control" type="date" value={f.lastMade} onChange={set('lastMade')} />
         </div>
-        <div className="col-md-4">
+        </>)}
+        <div className="col-12">
           <label className="form-label" htmlFor="tags">Tags (comma separated)</label>
           <input id="tags" className="form-control" placeholder="dinner, vegetarian" value={f.tags} onChange={set('tags')} />
         </div>
@@ -308,6 +351,13 @@ function Editor({ initial, onSave, onCancel }) {
         <div className="col-12">
           <label className="form-label" htmlFor="notes">What I'd change next time</label>
           <textarea id="notes" className="form-control" rows={3} value={f.notes} onChange={set('notes')} />
+        </div>
+        <div className="col-12">
+          <div className="form-check">
+            <input id="fav" className="form-check-input" type="checkbox" checked={f.favourite}
+              onChange={(e) => setF({ ...f, favourite: e.target.checked })} />
+            <label className="form-check-label" htmlFor="fav">Favourite</label>
+          </div>
         </div>
         <div className="col-12 d-flex gap-2">
           <button className="btn btn-primary" type="submit">Save recipe</button>
